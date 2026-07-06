@@ -1,7 +1,7 @@
 # fly.toml app configuration file generated for quant-stock-backend
 
-app = "quant-stock-backend"
-primary_region = "hkg" # 香港區域較近，您也可以改為其他如 nrt (東京) 或 tpe (台北)
+app = "quant-stock-dashboard"
+primary_region = "nrt" # 香港區域較近，您也可以改為其他如 nrt (東京) 或 tpe (台北)
 
 [build]
   dockerfile = "Dockerfile"
