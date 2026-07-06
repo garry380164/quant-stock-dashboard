@@ -1,26 +1,196 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #070b19;
+    --foreground: #e2e8f0;
+    --card-bg: #0f172a;
+    --border-color: #1e293b;
+    --accent-cyan: #06b6d4;
+    --accent-emerald: #10b981;
+    --accent-rose: #f43f5e;
+    --accent-amber: #f59e0b;
   }
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+/* 科技感背景網格 */
+.cyber-grid-bg {
+  background-image: 
+    linear-gradient(rgba(30, 41, 59, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 41, 59, 0.2) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: center;
+}
+
+/* 科技感霓虹邊框卡片 */
+.cyber-card {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(30, 41, 59, 0.8);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+  position: relative;
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 0px !important;
+}
+
+.cyber-card:hover {
+  border-color: rgba(6, 182, 212, 0.4);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.15), 0 4px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* 拖曳分隔線樣式 */
+.resizer-v {
+  width: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  cursor: col-resize;
+  position: relative;
+  z-index: 40;
+  touch-action: none;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.resizer-v::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+.resizer-v:hover, .resizer-v.dragging {
+  background: var(--accent-cyan);
+  outline: 1px solid rgba(6, 182, 212, 0.95);
+  outline-offset: -1px;
+}
+
+.resizer-h {
+  height: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  cursor: row-resize;
+  position: relative;
+  z-index: 40;
+  touch-action: none;
+  transition: background 0.15s, height 0.15s;
+}
+.resizer-h::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -5px;
+  bottom: -5px;
+}
+.resizer-h:hover, .resizer-h.dragging {
+  background: var(--accent-cyan);
+  outline: 1px solid rgba(6, 182, 212, 0.95);
+  outline-offset: -1px;
+}
+
+/* 頂部霓虹光條飾條 */
+.cyber-header-glow {
+  position: relative;
+}
+.cyber-header-glow::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), var(--accent-emerald), transparent);
+  box-shadow: 0 1px 8px var(--accent-cyan);
+}
+
+/* 綠紅閃爍動畫 (用於 Tick 跳動) */
+@keyframes flash-emerald {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(16, 185, 129, 0.25); }
+}
+
+@keyframes flash-rose {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(244, 63, 94, 0.25); }
+}
+
+.flash-up {
+  animation: flash-emerald 0.8s ease-in-out;
+}
+
+.flash-down {
+  animation: flash-rose 0.8s ease-in-out;
+}
+
+/* 掃描線特效 */
+.scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: rgba(6, 182, 212, 0.2);
+  opacity: 0.7;
+  animation: scanning 6s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes scanning {
+  0% { top: 0%; }
+  100% { top: 100%; }
+}
+
+/* LED 流水燈訊號滑入動畫 */
+@keyframes slide-in-signal {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.signal-enter {
+  animation: slide-in-signal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* 跑馬燈動畫 */
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+.marquee-content {
+  display: flex;
+  animation: marquee 25s linear infinite;
+}
+
+.marquee-content:hover {
+  animation-play-state: paused;
+}
+
+/* 自訂極細滾動條 */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
 }
