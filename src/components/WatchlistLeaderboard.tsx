@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { StockInfo } from '../types';
+import { NEXT_PUBLIC_API_URL } from '../config';
 
 interface WatchlistLeaderboardProps {
   stocks: StockInfo[];
@@ -76,7 +77,7 @@ export default function WatchlistLeaderboard({
     setIsLoadingMassive(true);
     
     try {
-      let url = `http://localhost:8080/api/massive/stocks?limit=30&sort=market_cap`;
+      let url = `${NEXT_PUBLIC_API_URL}/api/massive/stocks?limit=30&sort=market_cap`;
       if (cursorVal) {
         url += `&cursor=${encodeURIComponent(cursorVal)}`;
       }

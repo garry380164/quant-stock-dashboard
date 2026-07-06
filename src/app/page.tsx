@@ -22,6 +22,7 @@ import AIStrategyConsole from '../components/AIStrategyConsole';
 import MarketSentiment from '../components/MarketSentiment';
 import WatchlistLeaderboard from '../components/WatchlistLeaderboard';
 import PortfolioRisk from '../components/PortfolioRisk';
+import { NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL } from '../config';
 
 type KlineSyncedQuote = Pick<StockInfo, 'price' | 'change' | 'changePercent' | 'high24h' | 'low24h' | 'isKlineSynced' | 'priceSource'>;
 
@@ -480,7 +481,7 @@ export default function DashboardPage() {
   const handleGenerateAIStrategy = async () => {
     setIsGenerating(true);
     try {
-      const res = await fetch('http://localhost:8080/api/strategies/generate', {
+      const res = await fetch(`${NEXT_PUBLIC_API_URL}/api/strategies/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: selectedSymbol, timeframe }),
@@ -751,7 +752,7 @@ export default function DashboardPage() {
       timeframe: tf,
       limit: '2',
     });
-    const response = await fetch(`http://localhost:8080/api/klines?${params.toString()}`, {
+    const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
       signal,
       cache: 'no-store',
     });
@@ -868,7 +869,7 @@ export default function DashboardPage() {
           timeframe,
           limit: String(INITIAL_KLINE_LIMIT),
         });
-        const response = await fetch(`http://localhost:8080/api/klines?${params.toString()}`, {
+        const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
           signal: controller.signal,
           cache: 'no-store',
         });
@@ -938,7 +939,7 @@ export default function DashboardPage() {
         limit: String(OLDER_KLINE_BATCH_SIZE),
         before: String(oldestTimestamp),
       });
-      const response = await fetch(`http://localhost:8080/api/klines?${params.toString()}`, {
+      const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
         cache: 'no-store',
       });
 
@@ -1069,7 +1070,7 @@ export default function DashboardPage() {
   // 即時資料的 WebSocket 接收管理器
   useEffect(() => {
     // 建立連接到本地 WebSocket 伺服器
-    const socket = new WebSocket('ws://localhost:8080');
+    const socket = new WebSocket(NEXT_PUBLIC_WS_URL);
     socketRef.current = socket;
 
     socket.onopen = () => {
