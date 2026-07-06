@@ -6,6 +6,10 @@ primary_region = "nrt" # 香港區域較近，您也可以改為其他如 nrt (�
 [build]
   dockerfile = "Dockerfile"
 
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
 [env]
   PORT = "8080"
   DATABASE_URL = "/data/quant.db"
