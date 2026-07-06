@@ -8,8 +8,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import aiosqlite
 
-# ???(??????quant.db)
-DB_PATH = Path(__file__).parent.parent / "quant.db"
+# 資料庫路徑 (預設為本機 quant.db)
+DB_PATH_ENV = os.getenv("DATABASE_URL")
+if DB_PATH_ENV:
+    DB_PATH = Path(DB_PATH_ENV)
+else:
+    DB_PATH = Path(__file__).parent.parent / "quant.db"
 
 KLINE_TIMEFRAMES = ("15m", "1h", "4h", "1d", "1w", "1M")
 KLINE_HISTORY_COUNT = 10000

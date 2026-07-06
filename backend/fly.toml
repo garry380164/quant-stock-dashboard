@@ -1,0 +1,44 @@
+# fly.toml app configuration file generated for quant-stock-backend
+
+app = "quant-stock-backend"
+primary_region = "hkg" # 香港區域較近，您也可以改為其他如 nrt (東京) 或 tpe (台北)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DATABASE_URL = "/data/quant.db"
+  KLINE_DATA_SOURCE = "alpaca_iex"
+
+[[mounts]]
+  source = "quant_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.concurrency]]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.http_checks]]
+    interval = "10s"
+    grace_period = "5s"
+    method = "get"
+    path = "/"
+    protocol = "http"
+    timeout = "2s"
+    tls_skip_verify = false
