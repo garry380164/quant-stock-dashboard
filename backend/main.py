@@ -229,6 +229,11 @@ async def shutdown_event():
             pass
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "QUANT-X Backend is running"}
+
+
 @app.get("/api/massive/stocks")
 async def get_massive_stocks(limit: int = 20, cursor: str = None, search: str = None, sort: str = None):
     pairs = db_manager.get_local_trading_pairs()
