@@ -479,43 +479,16 @@ export default function DashboardPage() {
   }, [customStrategies, strategiesLoaded]);
 
   const handleGenerateAIStrategy = async () => {
-    setIsGenerating(true);
-    try {
-      const res = await fetch(`${NEXT_PUBLIC_API_URL}/api/strategies/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: selectedSymbol, timeframe }),
-      });
-      const data = await res.json();
-
-      if (data.status !== 'success' || !data.strategy) {
-        throw new Error(data.message || 'Strategy generation failed');
-      }
-
-      const newStrategy: AIStrategy = {
-        id: String(data.strategy.id || `LOCAL_${Date.now().toString(36).toUpperCase()}`),
-        name: String(data.strategy.name || `${selectedSymbol} ${timeframe} Strategy`),
-        description: String(data.strategy.description || ''),
-        concept: String(data.strategy.concept || ''),
-        logic: String(data.strategy.logic || ''),
-        indicators: Array.isArray(data.strategy.indicators)
-          ? data.strategy.indicators.map((value: unknown) => String(value))
-          : [],
-        parameters: {
-          stopLoss: Number(data.strategy.parameters?.stopLoss ?? 0),
-          takeProfit: Number(data.strategy.parameters?.takeProfit ?? 0),
-          positionSize: Number(data.strategy.parameters?.positionSize ?? 0),
-          riskControl: String(data.strategy.parameters?.riskControl || ''),
-        },
-      };
-      setCustomStrategies((prev) => [newStrategy, ...prev]);
-      setSelectedStrategyId(newStrategy.id);
-    } catch (e) {
-      console.error(e);
-      alert('策略生成失敗');
-    } finally {
-      setIsGenerating(false);
+    if (!isWsConnected || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      alert('WebSocket 未連線，無法生成策略。');
+      return;
     }
+    setIsGenerating(true);
+    socketRef.current.send(JSON.stringify({
+      type: 'GENERATE_STRATEGY',
+      symbol: selectedSymbol,
+      timeframe,
+    }));
   };
 
   const handleDeleteStrategy = async (id: string) => {
@@ -579,6 +552,50 @@ export default function DashboardPage() {
   // 用於在非同步 WebSocket 訊息接收中，追蹤最新的選取股票與週期，防止 Stale Closure 閉包陷阱
   const selectedSymbolRef = useRef<string>(selectedSymbol);
   const timeframeRef = useRef<string>(timeframe);
+
+  // Massive (全部美股) 的狀態
+  const [massiveStocks, setMassiveStocks] = useState<StockInfo[]>([]);
+  const [isLoadingMassive, setIsLoadingMassive] = useState<boolean>(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const isNewSearchRef = useRef<boolean>(false);
+
+  const handleFetchMassiveStocks = (cursorVal?: string | null, isNewSearch = false, searchQuery = '') => {
+    if (isLoadingMassive) return;
+    setIsLoadingMassive(true);
+    isNewSearchRef.current = isNewSearch;
+
+    if (isWsConnected && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'GET_MASSIVE_STOCKS',
+        limit: 30,
+        cursor: cursorVal,
+        search: searchQuery.trim(),
+        sort: 'market_cap',
+      }));
+    } else {
+      setIsLoadingMassive(false);
+    }
+  };
+
+  // 當父層 stocks 更新時，同步更新全部股票列表中對應股票的價格與 Fav 狀態
+  useEffect(() => {
+    if (massiveStocks.length === 0) return;
+    setMassiveStocks(prev => prev.map(mStock => {
+      const matched = stocks.find(s => s.symbol === mStock.symbol);
+      if (matched) {
+        return {
+          ...mStock,
+          price: matched.price,
+          change: matched.change,
+          changePercent: matched.changePercent,
+          high24h: matched.high24h,
+          low24h: matched.low24h,
+          isFav: matched.isFav
+        };
+      }
+      return mStock;
+    }));
+  }, [stocks]);
 
   useEffect(() => {
     stocksRef.current = stocks;
@@ -746,27 +763,15 @@ export default function DashboardPage() {
     )));
   };
 
-  const fetchLatestKlineQuote = async (symbol: string, tf: string, signal: AbortSignal) => {
-    const params = new URLSearchParams({
-      symbol,
-      timeframe: tf,
-      limit: '2',
-    });
-    const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
-      signal,
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      throw new Error(`K-line API failed with ${response.status}`);
+  const fetchLatestKlineQuote = (symbol: string, tf: string) => {
+    if (isWsConnected && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'GET_KLINES',
+        symbol,
+        timeframe: tf,
+        limit: 2,
+      }));
     }
-
-    const data = await response.json();
-    if (!Array.isArray(data.klines) || data.klines.length === 0) {
-      return;
-    }
-
-    syncStockWithLatestKline(symbol, data.klines);
   };
 
   // 當市場切換時，初始化相關數據
@@ -792,8 +797,6 @@ export default function DashboardPage() {
   useEffect(() => {
     if (stocks.length === 0) return;
 
-    const controller = new AbortController();
-    let waitingForWsKlines = false;
     markSelectedKlinePending(selectedSymbol);
     const requestKey = `${selectedSymbol}|${timeframe}`;
     const cachedKlines = klineCacheBySymbol[selectedSymbol]?.[timeframe] || [];
@@ -860,59 +863,20 @@ export default function DashboardPage() {
       return false;
     };
 
-    const requestMassiveKlines = async () => {
-      setIsKlineLoading(true);
-
-      try {
-        const params = new URLSearchParams({
-          symbol: selectedSymbol,
-          timeframe,
-          limit: String(INITIAL_KLINE_LIMIT),
-        });
-        const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
-          signal: controller.signal,
-          cache: 'no-store',
-        });
-
-        if (!response.ok) {
-          throw new Error(`K-line API failed with ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (controller.signal.aborted) return;
-
-        if (Array.isArray(data.klines) && data.klines.length > 0) {
-          applyKlines(data.klines, data.source || 'massive');
-          return;
-        }
-
-        throw new Error('K-line API returned no bars');
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        console.error('Error fetching Massive K-lines:', err);
-
-        if (requestWsKlines()) {
-          waitingForWsKlines = true;
-          return;
-        }
-
+    setIsKlineLoading(true);
+    const sent = requestWsKlines();
+    if (!sent) {
+      if (cachedKlines.length === 0) {
         const currentStocks = stocksRef.current;
         const currentStock = currentStocks.find(s => s.symbol === selectedSymbol) || currentStocks[0];
-        const history = generateHistoryKLines(selectedSymbol, currentStock.price, INITIAL_KLINE_LIMIT, timeframe);
+        const history = generateHistoryKLines(selectedSymbol, currentStock?.price || 100, INITIAL_KLINE_LIMIT, timeframe);
         applyKlines(history, 'local');
-      } finally {
-        if (!controller.signal.aborted && !waitingForWsKlines) {
-          setIsKlineLoading(false);
-        }
       }
-    };
-
-    requestMassiveKlines();
-
-    return () => controller.abort();
+      setIsKlineLoading(false);
+    }
   }, [selectedSymbol, timeframe, isWsConnected, stocks.length]);
 
-  const loadOlderKlines = useCallback(async () => {
+  const loadOlderKlines = useCallback(() => {
     const pagination = klinePaginationRef.current;
     const requestKey = `${selectedSymbolRef.current}|${timeframeRef.current}`;
     const oldestTimestamp = pagination.oldestTimestamp ?? klineDataRef.current[0]?.timestamp;
@@ -926,81 +890,22 @@ export default function DashboardPage() {
       return;
     }
 
-    klinePaginationRef.current = {
-      ...pagination,
-      isLoadingOlder: true,
-    };
-    setIsOlderKlineLoading(true);
-
-    try {
-      const params = new URLSearchParams({
+    if (isWsConnected && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      klinePaginationRef.current = {
+        ...pagination,
+        isLoadingOlder: true,
+      };
+      setIsOlderKlineLoading(true);
+      console.log('Requesting older K-lines via WS:', selectedSymbolRef.current, timeframeRef.current, oldestTimestamp);
+      socketRef.current.send(JSON.stringify({
+        type: 'GET_KLINES',
         symbol: selectedSymbolRef.current,
         timeframe: timeframeRef.current,
-        limit: String(OLDER_KLINE_BATCH_SIZE),
-        before: String(oldestTimestamp),
-      });
-      const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/klines?${params.toString()}`, {
-        cache: 'no-store',
-      });
-
-      if (!response.ok) {
-        throw new Error(`K-line API failed with ${response.status}`);
-      }
-
-      const data = await response.json();
-      const incomingKlines: KLineData[] = Array.isArray(data.klines) ? data.klines : [];
-
-      if (`${selectedSymbolRef.current}|${timeframeRef.current}` !== requestKey) {
-        return;
-      }
-
-      const currentData = klineDataRef.current;
-      const firstCurrentTs = currentData[0]?.timestamp ?? Number.POSITIVE_INFINITY;
-      const olderKlines = incomingKlines
-        .filter((bar) => bar.timestamp < firstCurrentTs)
-        .sort((a, b) => a.timestamp - b.timestamp);
-      const hasMore = incomingKlines.length >= OLDER_KLINE_BATCH_SIZE && olderKlines.length > 0;
-
-      if (olderKlines.length > 0) {
-        const seen = new Set(currentData.map((bar) => bar.timestamp));
-        const merged = [
-          ...olderKlines.filter((bar) => !seen.has(bar.timestamp)),
-          ...currentData,
-        ];
-
-        klineDataRef.current = merged;
-        setKlineData(merged);
-        setKlineSource(data.source || klineSource);
-
-        if (chartRef.current && chartRef.current.applyMoreData) {
-          chartRef.current.applyMoreData(olderKlines, hasMore);
-        }
-
-        klinePaginationRef.current = {
-          hasMore,
-          isLoadingOlder: false,
-          oldestTimestamp: merged[0]?.timestamp ?? null,
-          requestKey,
-        };
-      } else {
-        klinePaginationRef.current = {
-          ...klinePaginationRef.current,
-          hasMore: false,
-          isLoadingOlder: false,
-        };
-      }
-
-      setHasMoreOlderKlines(klinePaginationRef.current.hasMore);
-    } catch (err) {
-      console.error('Error fetching older K-lines:', err);
-      klinePaginationRef.current = {
-        ...klinePaginationRef.current,
-        isLoadingOlder: false,
-      };
-    } finally {
-      setIsOlderKlineLoading(false);
+        limit: OLDER_KLINE_BATCH_SIZE,
+        before: oldestTimestamp,
+      }));
     }
-  }, [klineSource]);
+  }, [isWsConnected]);
 
   const handleVisibleRangeChanged = useCallback((range: VisibleRange) => {
     if (range.fromIndex <= OLDER_KLINE_TRIGGER_INDEX) {
@@ -1020,7 +925,6 @@ export default function DashboardPage() {
 
     const symbols = watchlistSymbolsKey.split('|').filter(Boolean);
     const symbolSet = new Set(symbols);
-    const controller = new AbortController();
 
     klineSyncedQuotesRef.current = {};
     setStocks((prevStocks) => prevStocks.map((stock) => (
@@ -1028,15 +932,9 @@ export default function DashboardPage() {
     )));
 
     symbols.forEach((symbol) => {
-      fetchLatestKlineQuote(symbol, timeframe, controller.signal).catch((err) => {
-        if (!controller.signal.aborted) {
-          console.error('Error fetching latest watchlist K-line quote:', symbol, err);
-        }
-      });
+      fetchLatestKlineQuote(symbol, timeframe);
     });
-
-    return () => controller.abort();
-  }, [watchlistSymbolsKey, timeframe, simulateClosedMarket, quoteSource, market]);
+  }, [watchlistSymbolsKey, timeframe, simulateClosedMarket, quoteSource, market, isWsConnected]);
 
   // 當 K 線數據或選定策略改變時，重新計算 AI 買賣點標記與指標折線
   useEffect(() => {
@@ -1111,8 +1009,56 @@ export default function DashboardPage() {
           // Ignore random backend signals while strategy backtest signals are the source of truth.
         } else if (data.type === 'KLINES_DATA') {
           console.log('📥 Received KLINES_DATA via WS:', data.symbol, data.timeframe);
-          // 確保返回的 K 線資料是當前選擇的股票與 timeframe，避免多個非同步請求回傳順序錯亂
-          if (acceptWsKlinesRef.current && data.symbol === selectedSymbolRef.current && data.timeframe === timeframeRef.current) {
+          
+          // 同步自選股清單與該 K 線的最新報價
+          syncStockWithLatestKline(data.symbol, data.klines);
+
+          const pagination = klinePaginationRef.current;
+          const isOlderRequest = pagination.isLoadingOlder && 
+                                data.symbol === selectedSymbolRef.current && 
+                                data.timeframe === timeframeRef.current;
+
+          if (isOlderRequest) {
+            const currentData = klineDataRef.current;
+            const firstCurrentTs = currentData[0]?.timestamp ?? Number.POSITIVE_INFINITY;
+            const incomingKlines = data.klines || [];
+            const olderKlines = incomingKlines
+              .filter((bar: KLineData) => bar.timestamp < firstCurrentTs)
+              .sort((a: KLineData, b: KLineData) => a.timestamp - b.timestamp);
+            const hasMore = incomingKlines.length >= OLDER_KLINE_BATCH_SIZE && olderKlines.length > 0;
+            const requestKey = `${data.symbol}|${data.timeframe}`;
+
+            if (olderKlines.length > 0) {
+              const seen = new Set(currentData.map((bar: KLineData) => bar.timestamp));
+              const merged = [
+                ...olderKlines.filter((bar: KLineData) => !seen.has(bar.timestamp)),
+                ...currentData,
+              ];
+              klineDataRef.current = merged;
+              setKlineData(merged);
+              setKlineSource('sqlite');
+
+              if (chartRef.current && chartRef.current.applyMoreData) {
+                chartRef.current.applyMoreData(olderKlines, hasMore);
+              }
+
+              klinePaginationRef.current = {
+                hasMore,
+                isLoadingOlder: false,
+                oldestTimestamp: merged[0]?.timestamp ?? null,
+                requestKey,
+              };
+            } else {
+              klinePaginationRef.current = {
+                ...klinePaginationRef.current,
+                hasMore: false,
+                isLoadingOlder: false,
+              };
+            }
+            setHasMoreOlderKlines(klinePaginationRef.current.hasMore);
+            setIsOlderKlineLoading(false);
+
+          } else if (acceptWsKlinesRef.current && data.symbol === selectedSymbolRef.current && data.timeframe === timeframeRef.current) {
             acceptWsKlinesRef.current = false;
             const requestKey = `${data.symbol}|${data.timeframe}`;
             klineDataRef.current = data.klines;
@@ -1127,13 +1073,63 @@ export default function DashboardPage() {
             };
             setHasMoreOlderKlines(data.klines.length >= INITIAL_KLINE_LIMIT);
             setIsOlderKlineLoading(false);
-            syncStockWithLatestKline(data.symbol, data.klines);
             setIsKlineLoading(false);
             
-            // 如果 K 線圖實例已經準備好，重新設定數據
             if (chartRef.current && chartRef.current.setData) {
               chartRef.current.setData(data.klines);
             }
+          }
+        } else if (data.type === 'MASSIVE_STOCKS_DATA') {
+          console.log('📥 Received MASSIVE_STOCKS_DATA via WS');
+          const results: StockInfo[] = (data.results || []).map((item: any) => ({
+            symbol: item.symbol,
+            name: item.name,
+            price: item.price,
+            change: item.change,
+            changePercent: item.changePercent,
+            high24h: item.high24h,
+            low24h: item.low24h,
+            volume: item.volume || 0,
+            marketCap: item.marketCap,
+            market: item.market || 'US',
+            isFav: item.isFav
+          }));
+
+          if (isNewSearchRef.current) {
+            setMassiveStocks(results);
+          } else {
+            setMassiveStocks(prev => {
+              const existingSymbols = new Set(prev.map(s => s.symbol));
+              const filteredResults = results.filter(r => !existingSymbols.has(r.symbol));
+              return [...prev, ...filteredResults];
+            });
+          }
+          setNextCursor(data.next_cursor);
+          setIsLoadingMassive(false);
+        } else if (data.type === 'GENERATE_STRATEGY_RESPONSE') {
+          console.log('📥 Received GENERATE_STRATEGY_RESPONSE via WS:', data);
+          setIsGenerating(false);
+          if (data.status === 'success' && data.strategy) {
+            const newStrategy: AIStrategy = {
+              id: String(data.strategy.id || `LOCAL_${Date.now().toString(36).toUpperCase()}`),
+              name: String(data.strategy.name || `${selectedSymbolRef.current} ${timeframeRef.current} Strategy`),
+              description: String(data.strategy.description || ''),
+              concept: String(data.strategy.concept || ''),
+              logic: String(data.strategy.logic || ''),
+              indicators: Array.isArray(data.strategy.indicators)
+                ? data.strategy.indicators.map((value: unknown) => String(value))
+                : [],
+              parameters: {
+                stopLoss: Number(data.strategy.parameters?.stopLoss ?? 0),
+                takeProfit: Number(data.strategy.parameters?.takeProfit ?? 0),
+                positionSize: Number(data.strategy.parameters?.positionSize ?? 0),
+                riskControl: String(data.strategy.parameters?.riskControl || ''),
+              },
+            };
+            setCustomStrategies((prev) => [newStrategy, ...prev]);
+            setSelectedStrategyId(newStrategy.id);
+          } else {
+            alert(data.message || '策略生成失敗');
           }
         }
       } catch (err) {
@@ -1528,6 +1524,10 @@ export default function DashboardPage() {
               onSelectStock={handleSelectSymbol} 
               selectedSymbol={selectedSymbol} 
               isUSStyle={isUSStyle} 
+              massiveStocks={massiveStocks}
+              isLoadingMassive={isLoadingMassive}
+              nextCursor={nextCursor}
+              onFetchMassiveStocks={handleFetchMassiveStocks}
             />
           </div>
 
@@ -1686,6 +1686,10 @@ export default function DashboardPage() {
                 onSelectStock={handleSelectSymbol} 
                 selectedSymbol={selectedSymbol} 
                 isUSStyle={isUSStyle} 
+                massiveStocks={massiveStocks}
+                isLoadingMassive={isLoadingMassive}
+                nextCursor={nextCursor}
+                onFetchMassiveStocks={handleFetchMassiveStocks}
               />
             </div>
 

@@ -451,6 +451,30 @@ async def websocket_endpoint(websocket: WebSocket):
                 indices = indices_us if current_market == "US" else indices_tw
                 await websocket.send_json({"type": "TICK_UPDATE", "stocks": stocks, "indices": indices, "priceSource": "simulated_sqlite"})
 
+            elif msg_type == "GET_MASSIVE_STOCKS":
+                limit = data.get("limit", 20)
+                cursor = data.get("cursor")
+                search = data.get("search")
+                sort = data.get("sort")
+                pairs = db_manager.get_local_trading_pairs()
+                if search:
+                    query = search.strip().lower()
+                    pairs = [item for item in pairs if query in item["symbol"].lower() or query in item["name"].lower()]
+                limited = pairs[: max(1, min(int(limit or 20), LOCAL_SYMBOL_LIMIT))]
+                await websocket.send_json({
+                    "type": "MASSIVE_STOCKS_DATA",
+                    "results": limited,
+                    "next_cursor": None,
+                    "source": "sqlite"
+                })
+
+            elif msg_type == "GENERATE_STRATEGY":
+                res = await generate_strategy(data)
+                await websocket.send_json({
+                    "type": "GENERATE_STRATEGY_RESPONSE",
+                    **res
+                })
+
     except WebSocketDisconnect:
         logger.info("WS_CLIENT_DISCONNECTED")
     except Exception as exc:

@@ -10,6 +10,10 @@ interface WatchlistLeaderboardProps {
   onSelectStock: (symbol: string) => void;
   selectedSymbol: string;
   isUSStyle: boolean;
+  massiveStocks: StockInfo[];
+  isLoadingMassive: boolean;
+  nextCursor: string | null;
+  onFetchMassiveStocks: (cursorVal?: string | null, isNewSearch?: boolean, searchQuery?: string) => void;
 }
 
 export default function WatchlistLeaderboard({
@@ -18,14 +22,14 @@ export default function WatchlistLeaderboard({
   onSelectStock,
   selectedSymbol,
   isUSStyle,
+  massiveStocks,
+  isLoadingMassive,
+  nextCursor,
+  onFetchMassiveStocks,
 }: WatchlistLeaderboardProps) {
   const [activeTab, setActiveTab] = useState<'WATCHLIST' | 'SCANNER' | 'ALL'>('WATCHLIST');
   const [scannerType, setScannerType] = useState<'VOLUME' | 'BREAKOUT' | 'INSTITUTION'>('VOLUME');
 
-  // Massive (全部美股) 的狀態
-  const [massiveStocks, setMassiveStocks] = useState<StockInfo[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoadingMassive, setIsLoadingMassive] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // 依據配色獲得漲跌顏色 class
@@ -71,59 +75,10 @@ export default function WatchlistLeaderboard({
     }
   };
 
-  // 串接後端 API 拉取所有股票的清單
-  const fetchMassiveStocks = async (cursorVal?: string | null, isNewSearch = false) => {
-    if (isLoadingMassive) return;
-    setIsLoadingMassive(true);
-    
-    try {
-      let url = `${NEXT_PUBLIC_API_URL}/api/massive/stocks?limit=30&sort=market_cap`;
-      if (cursorVal) {
-        url += `&cursor=${encodeURIComponent(cursorVal)}`;
-      }
-      if (searchQuery.trim() !== '') {
-        url += `&search=${encodeURIComponent(searchQuery.trim())}`;
-      }
-      
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        const results: StockInfo[] = data.results.map((item: any) => ({
-          symbol: item.symbol,
-          name: item.name,
-          price: item.price,
-          change: item.change,
-          changePercent: item.changePercent,
-          high24h: item.high24h,
-          low24h: item.low24h,
-          volume: item.volume || 0,
-          marketCap: item.marketCap,
-          market: item.market || 'US',
-          isFav: item.isFav
-        }));
-        
-        if (isNewSearch) {
-          setMassiveStocks(results);
-        } else {
-          setMassiveStocks(prev => {
-            const existingSymbols = new Set(prev.map(s => s.symbol));
-            const filteredResults = results.filter(r => !existingSymbols.has(r.symbol));
-            return [...prev, ...filteredResults];
-          });
-        }
-        setNextCursor(data.next_cursor);
-      }
-    } catch (err) {
-      console.error('❌ Error fetching massive stocks:', err);
-    } finally {
-      setIsLoadingMassive(false);
-    }
-  };
-
   // 當切換到 ALL 且清單為空時，進行第一次載入
   useEffect(() => {
     if (activeTab === 'ALL' && massiveStocks.length === 0) {
-      fetchMassiveStocks(null, true);
+      onFetchMassiveStocks(null, true, searchQuery);
     }
   }, [activeTab]);
 
@@ -131,30 +86,10 @@ export default function WatchlistLeaderboard({
   useEffect(() => {
     if (activeTab !== 'ALL') return;
     const timer = setTimeout(() => {
-      fetchMassiveStocks(null, true);
+      onFetchMassiveStocks(null, true, searchQuery);
     }, 450);
     return () => clearTimeout(timer);
   }, [searchQuery]);
-
-  // 當父層 stocks (自選/價格) 更新時，同步更新全部股票列表中對應股票的價格與 Fav 狀態
-  useEffect(() => {
-    if (massiveStocks.length === 0) return;
-    setMassiveStocks(prev => prev.map(mStock => {
-      const matched = stocks.find(s => s.symbol === mStock.symbol);
-      if (matched) {
-        return {
-          ...mStock,
-          price: matched.price,
-          change: matched.change,
-          changePercent: matched.changePercent,
-          high24h: matched.high24h,
-          low24h: matched.low24h,
-          isFav: matched.isFav
-        };
-      }
-      return mStock;
-    }));
-  }, [stocks]);
 
   // 處理滾動到底部時載入更多 (Infinite Scroll)
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -163,7 +98,7 @@ export default function WatchlistLeaderboard({
     // 剩餘可滾動距離小於 30px 時，載入下一頁
     if (target.scrollHeight - target.scrollTop - target.clientHeight < 30) {
       if (!isLoadingMassive && nextCursor) {
-        fetchMassiveStocks(nextCursor, false);
+        onFetchMassiveStocks(nextCursor, false, searchQuery);
       }
     }
   };
