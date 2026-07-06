@@ -1001,7 +1001,26 @@ export default function DashboardPage() {
           }));
         } else if (data.type === 'TICK_UPDATE') {
           // 被動接收即時報價跳動
-          setStocks(mergeStocksWithKlineQuotes(bindSelectedStockToLatestKline(data.stocks), true));
+          if (data.isDelta) {
+            setStocks((prevStocks) => {
+              const deltaMap = new Map<string, StockInfo>(data.stocks.map((s: StockInfo) => [s.symbol, s]));
+              const updated = prevStocks.map((stock) => {
+                const delta = deltaMap.get(stock.symbol);
+                if (delta) {
+                  return {
+                    ...stock,
+                    ...delta,
+                    high24h: Math.max(stock.high24h, delta.price),
+                    low24h: Math.min(stock.low24h, delta.price),
+                  };
+                }
+                return stock;
+              });
+              return mergeStocksWithKlineQuotes(bindSelectedStockToLatestKline(updated), true);
+            });
+          } else {
+            setStocks(mergeStocksWithKlineQuotes(bindSelectedStockToLatestKline(data.stocks), true));
+          }
           setIndices(data.indices);
           setQuoteSource(data.priceSource || 'unknown');
         } else if (data.type === 'AI_SIGNAL') {

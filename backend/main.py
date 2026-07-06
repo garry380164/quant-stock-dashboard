@@ -39,7 +39,7 @@ SIMULATED_PRICE_UPDATE_MIN_INTERVAL_SECONDS = 0.6
 SIMULATED_PRICE_UPDATE_FAST_MAX_INTERVAL_SECONDS = 2.4
 SIMULATED_PRICE_UPDATE_MAX_INTERVAL_SECONDS = 8.0
 SIMULATED_PRICE_UPDATE_FAST_PROBABILITY = 0.55
-SIMULATED_PRICE_UPDATE_POLL_INTERVAL_SECONDS = 0.4
+SIMULATED_PRICE_UPDATE_POLL_INTERVAL_SECONDS = 1.5
 SIMULATED_INDEX_UPDATE_MIN_INTERVAL_SECONDS = 3.0
 SIMULATED_INDEX_UPDATE_FAST_MAX_INTERVAL_SECONDS = 7.0
 SIMULATED_INDEX_UPDATE_MAX_INTERVAL_SECONDS = 10.0
@@ -178,13 +178,14 @@ def get_next_index_tick_delay():
     )
 
 
-async def broadcast_market_update(market_type, stocks, indices):
+async def broadcast_market_update(market_type, stocks, indices, is_delta=False):
     for ws in list(connected_clients):
         if client_states.get(ws, {}).get("market") != market_type:
             continue
         try:
             await ws.send_json({
                 "type": "TICK_UPDATE",
+                "isDelta": is_delta,
                 "stocks": stocks,
                 "indices": indices,
                 "priceSource": "simulated_sqlite",
@@ -637,7 +638,7 @@ def update_due_market_stocks(stocks, base_fallback, market_type, now_monotonic, 
             due_stocks.append(stock)
 
     if not due_stocks:
-        return stocks, False
+        return stocks, [], False
 
     due_anchors = {
         stock["symbol"]: (kline_anchors or {}).get(stock["symbol"])
@@ -650,7 +651,7 @@ def update_due_market_stocks(stocks, base_fallback, market_type, now_monotonic, 
     for stock in updated_due:
         next_symbol_tick_at[f"{market_type}:{stock['symbol']}"] = now_monotonic + get_next_simulated_tick_delay()
 
-    return [updated_by_symbol.get(stock.get("symbol"), stock) for stock in stocks], True
+    return [updated_by_symbol.get(stock.get("symbol"), stock) for stock in stocks], updated_due, True
 
 
 async def background_tick_loop():
@@ -672,8 +673,8 @@ async def background_tick_loop():
             now_monotonic = time.monotonic()
             indices_us, did_update_indices_us = update_due_indices(indices_us, "US", now_monotonic)
             indices_tw, did_update_indices_tw = update_due_indices(indices_tw, "TW", now_monotonic)
-            updated_us, did_update_us = update_due_market_stocks(stocks_us, 180.0, "US", now_monotonic, anchors_us)
-            updated_tw, did_update_tw = update_due_market_stocks(stocks_tw, 780.0, "TW", now_monotonic, anchors_tw)
+            updated_us, delta_us, did_update_us = update_due_market_stocks(stocks_us, 180.0, "US", now_monotonic, anchors_us)
+            updated_tw, delta_tw, did_update_tw = update_due_market_stocks(stocks_tw, 780.0, "TW", now_monotonic, anchors_tw)
             if not did_update_us and not did_update_tw and not did_update_indices_us and not did_update_indices_tw:
                 continue
 
@@ -684,8 +685,8 @@ async def background_tick_loop():
             indices_tw, did_update_indices_tw = update_due_indices(indices_tw, "TW", now_monotonic)
 
             if connected_clients:
-                await broadcast_market_update("US", updated_us, indices_us)
-                await broadcast_market_update("TW", updated_tw, indices_tw)
+                await broadcast_market_update("US", delta_us if did_update_us else [], indices_us, is_delta=True)
+                await broadcast_market_update("TW", delta_tw if did_update_tw else [], indices_tw, is_delta=True)
                 for ws in list(connected_clients):
                     market = client_states.get(ws, {}).get("market", "US")
                     current_stocks = updated_us if market == "US" else updated_tw
