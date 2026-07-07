@@ -79,6 +79,7 @@ const CustomKLineChart = forwardRef(({
     const activeDrawingRef = useRef(null);
     const lastNotifiedDrawingsRef = useRef('');
     const drawingsKeyRef = useRef(drawingsKey);
+    const persistentCrosshairRef = useRef({ x: 0, y: 0, active: false });
 
     const notifyDrawingsChange = () => {
         if (onDrawingsChangeRef.current) {
@@ -421,8 +422,19 @@ const CustomKLineChart = forwardRef(({
 
         const { layouts, chartWidth, totalChartHeight, yAxisWidth, xAxisHeight } = layoutInfoRef.current;
 
-        // If mouse is out of bounds or event is null, handle exit state
-        if (mouseX === null || mouseY === null || mouseX > chartWidth || mouseY > totalChartHeight) {
+        const isDrawingMode = activeToolRef.current && activeToolRef.current !== 'cursor';
+        let targetX = mouseX;
+        let targetY = mouseY;
+
+        if (mouseX !== null && mouseY !== null) {
+            persistentCrosshairRef.current = { x: mouseX, y: mouseY, active: true };
+        } else if (isDrawingMode && persistentCrosshairRef.current.active) {
+            targetX = persistentCrosshairRef.current.x;
+            targetY = persistentCrosshairRef.current.y;
+        }
+
+        // If targetX / targetY are still null, handle exit state
+        if (targetX === null || targetY === null) {
             hoveredCandleRef.current = null;
             if (isPinnedRef.current) {
                 const dataList = dataListRef.current;
@@ -446,8 +458,8 @@ const CustomKLineChart = forwardRef(({
         ctx.save();
         ctx.scale(dpr, dpr);
 
-        // Find index matching mouseX
-        const currentIdx = coordRef.current.xToIndex(mouseX);
+        // Find index matching targetX
+        const currentIdx = coordRef.current.xToIndex(targetX);
         const dataList = dataListRef.current;
 
         if (currentIdx >= 0 && currentIdx < dataList.length) {
@@ -455,21 +467,32 @@ const CustomKLineChart = forwardRef(({
             hoveredCandleRef.current = candle;
             const x = coordRef.current.indexToX(currentIdx);
 
-            // Draw Vertical crosshair line
+            // Draw Vertical crosshair line (dashed, full height)
             ctx.strokeStyle = '#555555';
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
             ctx.beginPath();
             ctx.moveTo(x, 0);
-            ctx.lineTo(x, totalChartHeight);
+            ctx.lineTo(x, canvas.height / dpr);
             ctx.stroke();
 
-            // Draw Horizontal crosshair line
+            // Draw Horizontal crosshair line (dashed, full width)
             ctx.beginPath();
-            ctx.moveTo(0, mouseY);
-            ctx.lineTo(chartWidth, mouseY);
+            ctx.moveTo(0, targetY);
+            ctx.lineTo(canvas.width / dpr, targetY);
             ctx.stroke();
             ctx.setLineDash([]);
+
+            // Draw center circle if in drawing mode (TradingView style)
+            if (isDrawingMode) {
+                ctx.fillStyle = '#00b2ff';
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(x, targetY, 4.5, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+            }
 
             // Draw X Axis floating Label
             ctx.fillStyle = '#2b2f3a';
@@ -488,10 +511,10 @@ const CustomKLineChart = forwardRef(({
             let timeLabel = format(date, 'yyyy-MM-dd HH:mm');
             ctx.fillText(timeLabel, x, totalChartHeight + labelXH / 2);
 
-            // Find which pane the mouse is currently hovering
+            // Find which pane targetY is currently hovering
             let activePane = null;
             Object.entries(layouts).forEach(([paneName, layout]) => {
-                if (mouseY >= layout.yMin && mouseY <= layout.yMax) {
+                if (targetY >= layout.yMin && targetY <= layout.yMax) {
                     activePane = paneName;
                 }
             });
@@ -500,15 +523,15 @@ const CustomKLineChart = forwardRef(({
             if (activePane) {
                 const pane = coordRef.current.panes[activePane];
                 if (pane) {
-                    const value = coordRef.current.yToValue(activePane, mouseY);
+                    const value = coordRef.current.yToValue(activePane, targetY);
                     
                     ctx.fillStyle = '#2b2f3a';
                     const labelYW = yAxisWidth - 2;
                     const labelYH = 18;
-                    ctx.fillRect(chartWidth, mouseY - labelYH / 2, labelYW, labelYH);
+                    ctx.fillRect(chartWidth, targetY - labelYH / 2, labelYW, labelYH);
                     
                     ctx.strokeStyle = '#8f96a3';
-                    ctx.strokeRect(chartWidth, mouseY - labelYH / 2, labelYW, labelYH);
+                    ctx.strokeRect(chartWidth, targetY - labelYH / 2, labelYW, labelYH);
 
                     ctx.fillStyle = '#f0f3fa';
                     ctx.textAlign = 'left';
@@ -524,7 +547,7 @@ const CustomKLineChart = forwardRef(({
                         priceLabel = value.toFixed(pricePrecisionRef.current);
                     }
 
-                    ctx.fillText(priceLabel, chartWidth + 6, mouseY);
+                    ctx.fillText(priceLabel, chartWidth + 6, targetY);
                 }
             }
 
@@ -532,7 +555,7 @@ const CustomKLineChart = forwardRef(({
             setLegendInfo(getLegendInfoForCandle(candle));
 
             if (onCrosshairMoved) {
-                onCrosshairMoved({ candle, index: currentIdx, mouseX, mouseY });
+                onCrosshairMoved({ candle, index: currentIdx, mouseX: targetX, mouseY: targetY });
             }
         }
 
@@ -1047,6 +1070,9 @@ const CustomKLineChart = forwardRef(({
 
     // 5.5 Handle activeTool change & bind drawing events to interaction handler
     useEffect(() => {
+        if (activeTool === 'cursor') {
+            persistentCrosshairRef.current.active = false;
+        }
         if (interactionRef.current) {
             interactionRef.current.activeTool = activeTool;
             interactionRef.current.onDrawingsUpdated = () => {
@@ -1241,7 +1267,8 @@ const CustomKLineChart = forwardRef(({
                     left: 0, 
                     top: 0, 
                     zIndex: 2, 
-                    cursor: 'crosshair' 
+                    cursor: 'crosshair',
+                    touchAction: 'none'
                 }} 
             />
 
